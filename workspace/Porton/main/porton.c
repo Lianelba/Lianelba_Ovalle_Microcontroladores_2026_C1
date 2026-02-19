@@ -17,7 +17,6 @@
 #define Estado_Cerrado 2
 #define Estado_Abriendo 3
 #define Estado_Cerrando 4
-#define Estado_Desconocido 5
 #define Estado_Error 6
 #define Estado_Stop 7
 
@@ -28,7 +27,7 @@
 #define Buzzer_ON 1
 #define Buzzer_OFF 0
 
-struct IO {
+struct signal {
     unsigned int fca; //final carrera abierto
     unsigned int fcc; //final carrera cerrado
     unsigned int ftc; //fotoresistor
@@ -98,12 +97,12 @@ int Func_Estado_Inicio(void) {
     io.lamp = Lamp_OFF;
     io.buzzer = Buzzer_OFF;
 
-    if (io.fca)
-        Estado_Siguiente = Estado_Abierto;
-    else if (io.fcc)
-        Estado_Siguiente = Estado_Cerrado;
-    else
-        Estado_Siguiente = Estado_Stop;
+    if (io.fca && io.bc)
+        Estado_Siguiente = Estado_Abriendo;
+    else if (io.fcc && io.ba)
+        Estado_Siguiente = Estado_Cerrando;
+    else if (io.fcc && io.fca)
+        Estado_Siguiente = Estado_Error;
 
     return 0;
 }
@@ -116,20 +115,20 @@ int Func_Estado_Abierto(void) {
 
     if (io.bc) 
         Estado_Siguiente = Estado_Cerrando;
-    }
+
 
     return 0;
 }
 
 int Func_Estado_Cerrado(void) {
 
-    io.mc = Motor_ON;
+    io.mc = Motor_OFF;
     io.ma = Motor_OFF;
     io.lamp = Lamp_OFF;
 
-    if (io.ba) {
+    if (io.ba)
         Estado_Siguiente = Estado_Abriendo;
-    }
+
 
     return 0;
 }
@@ -142,9 +141,11 @@ int Func_Estado_Abriendo(void) {
 
     if (io.fca)
         Estado_Siguiente = Estado_Abierto;
-    else if (io.bs){
-		Estado_Siguiente = 
-	}
+    else if (io.bs)
+		Estado_Siguiente = Estado_Stop;
+    else if (io.bc)
+    	Estado_Siguiente = Estado_Cerrando;
+
 
     return 0;
 }
@@ -174,17 +175,16 @@ int Func_Estado_Stop(void) {
     io.ma = Motor_OFF;
     io.lamp = Lamp_ON;
 
-    if (io.ba) {
-        motor_start_tick = xTaskGetTickCount();
+    if (io.ba)
         Estado_Siguiente = Estado_Abriendo;
-    }
-    else if (io.bc) {
-        motor_start_tick = xTaskGetTickCount();
-        Estado_Siguiente = Estado_Cerrando;
-    }
+    else if (io.bc)
+    	Estado_Siguiente = Estado_Cerrando;
+
 
     return 0;
 }
+
+static const char *tag = "GARAGE";
 
 int Func_Estado_Error(void) {
 
@@ -193,8 +193,67 @@ int Func_Estado_Error(void) {
     io.lamp = Lamp_ON;
     io.buzzer = Buzzer_ON;
 
+    if (io.fcc & io.fca) {
+        set_timer();
+        if (io.fcc & io.fca & ~io.ftc) {
+            Estado_Siguiente = Estado_Cerrando;
+        }
+    }
+
     return 0;
 }
 
+void app_main(void) {
 
+    ESP_LOGI(tag, "Iniciando sistema de puerta de garage");
+
+    io.fca = 0;
+    io.fcc = 0;
+    io.ftc = 0;
+    io.bc  = 0;
+    io.ba  = 0;
+    io.bs  = 0;
+    io.be  = 0;
+    io.mc  = Motor_OFF;
+    io.ma  = Motor_OFF;
+    io.lamp   = Lamp_OFF;
+    io.buzzer = Buzzer_OFF;
+
+    set_timer();
+
+    while (1) {
+
+        Estado_Actual = Estado_Siguiente;
+
+        switch (Estado_Actual) {
+            case Estado_Inicio:
+                Func_Estado_Inicio();
+                break;
+            case Estado_Abierto:
+                Func_Estado_Abierto();
+                break;
+            case Estado_Cerrado:
+                Func_Estado_Cerrado();
+                break;
+            case Estado_Abriendo:
+                Func_Estado_Abriendo();
+                break;
+            case Estado_Cerrando:
+                Func_Estado_Cerrando();
+                break;
+            case Estado_Stop:
+                Func_Estado_Stop();
+                break;
+            case Estado_Error:
+                Func_Estado_Error();
+                break;
+            default:
+                ESP_LOGE(tag, "Estado desconocido: %d", Estado_Actual);
+                Estado_Siguiente = Estado_Inicio;
+                break;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 
